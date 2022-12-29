@@ -5,6 +5,27 @@
         <!-- this includes like everything important in the build folder, apparently necessary to get the nuget assemblies -->
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+      <Optimize>False</Optimize>
+      <WarningLevel>7</WarningLevel>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+      <Optimize>False</Optimize>
+      <WarningLevel>7</WarningLevel>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x86'">
+      <Optimize>False</Optimize>
+      <WarningLevel>7</WarningLevel>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+      <WarningLevel>7</WarningLevel>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+      <WarningLevel>7</WarningLevel>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x86'">
+      <WarningLevel>7</WarningLevel>
+    </PropertyGroup>
 
     <!-- there seems to be no flag for checking if building  -->
     <!-- or publishing, so we just have two separate targets -->
@@ -42,4 +63,8 @@
         <PackageReference Include="Fmod5Sharp" Version="3.0.1" />
         <PackageReference Include="Mono.Cecil" Version="0.11.4" />
     </ItemGroup>
+
+    <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+      <Exec Command="copy .\bin\Debug\net6.0\AudioClipPlugin.dll ..\UABEAvalonia\bin\Debug\net6.0\plugins\AudioClipPlugin.dll" />
+    </Target>
 </Project>
