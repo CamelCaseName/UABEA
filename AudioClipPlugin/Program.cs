@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Fmod5Sharp;
 using Fmod5Sharp.FmodTypes;
+using Microsoft.VisualBasic.FileIO;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -76,7 +77,7 @@ namespace AudioPlugin
                     name = Extensions.ReplaceInvalidPathChars(name);
 
                     CompressionFormat compressionFormat = (CompressionFormat)baseField["m_CompressionFormat"].AsInt;
-                    string extension = GetExtension(compressionFormat);
+                    string extension = AudioPluginDll.GetExtension(compressionFormat);
                     string file = Path.Combine(dir, $"{name}-{Path.GetFileName(cont.FileInstance.path)}-{cont.PathId}.{extension}");
 
                     string ResourceSource = baseField["m_Resource.m_Source"].AsString;
@@ -119,7 +120,7 @@ namespace AudioPlugin
 
             CompressionFormat compressionFormat = (CompressionFormat)baseField["m_CompressionFormat"].AsInt;
 
-            string extension = GetExtension(compressionFormat);
+            string extension = AudioPluginDll.GetExtension(compressionFormat);
 
             var sfd = await win.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions()
             {
@@ -202,23 +203,6 @@ namespace AudioPlugin
             dataHeaderChunkSize.CopyTo(wavData, 40);
         }
 
-        private static string GetExtension(CompressionFormat format)
-        {
-            return format switch
-            {
-                CompressionFormat.PCM => "wav",
-                CompressionFormat.Vorbis => "ogg",
-                CompressionFormat.ADPCM => "wav",
-                CompressionFormat.MP3 => "mp3",
-                CompressionFormat.VAG => "dat", // proprietary
-                CompressionFormat.HEVAG => "dat", // proprietary
-                CompressionFormat.XMA => "dat", // proprietary
-                CompressionFormat.AAC => "aac",
-                CompressionFormat.GCADPCM => "wav", // nintendo adpcm
-                CompressionFormat.ATRAC9 => "dat", // proprietary
-                _ => ""
-            };
-        }
 
         private bool GetAudioBytes(AssetContainer cont, string filepath, ulong offset, ulong size, out byte[] audioData)
         {
@@ -297,8 +281,42 @@ namespace AudioPlugin
             return true;
         }
 
-        public Task<bool> ExecutePlugin(Window win, AssetWorkspace workspace, List<AssetContainer> selection) => throw new NotImplementedException();
+        public async Task<bool> ExecutePlugin(Window win, AssetWorkspace workspace, List<AssetContainer> selection)
+        {
+            if (selection.Count > 1)
+            {
+                await MessageBoxUtil.ShowDialog(win, "Error", "You can't import more than one AudioClip at a time");
+                return false;
+            }
+            await SingleImport(win, workspace, selection[0]);
+            return true;
+        }
 
+        private async Task<bool> SingleImport(Window win, AssetWorkspace workspace, AssetContainer selection)
+        {
+            AssetTypeValueField baseField = workspace.GetBaseField(selection);
+            string name = baseField["m_Name"].AsString;
+            name = Extensions.ReplaceInvalidPathChars(name);
+
+            CompressionFormat compressionFormat = (CompressionFormat)baseField["m_CompressionFormat"].AsInt;
+            string extension = AudioPluginDll.GetExtension(compressionFormat);
+
+            var sfd = await win.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions()
+            {
+                Title = "Select audio file",
+                AllowMultiple = false,
+            });
+
+            if (sfd == null || sfd.Count != 1) return false;
+            if (!sfd[0].TryGetUri(out var uri)) return false;
+
+            string file = uri.LocalPath;
+            if (file == null || file == string.Empty) return false;
+
+            //todo import file into pcm bytes, then load into assetbundle and adjust offsets for it and all following files
+
+            return true;
+        }
     }
 
     public class PlayAudioClipOption : UABEAPluginOption
@@ -346,13 +364,13 @@ namespace AudioPlugin
         }
     }
 
-    public class TextAssetPlugin : UABEAPlugin
+    public class AudioPluginDll : UABEAPlugin
     {
         public PluginInfo Init()
         {
             var info = new PluginInfo
             {
-                name = "AudioClip Export",
+                name = "AudioClip Plugin",
 
                 options = new List<UABEAPluginOption>
                 {
@@ -362,6 +380,23 @@ namespace AudioPlugin
                 }
             };
             return info;
+        }
+        public static string GetExtension(CompressionFormat format)
+        {
+            return format switch
+            {
+                CompressionFormat.PCM => "wav",
+                CompressionFormat.Vorbis => "ogg",
+                CompressionFormat.ADPCM => "wav",
+                CompressionFormat.MP3 => "mp3",
+                CompressionFormat.VAG => "dat", // proprietary
+                CompressionFormat.HEVAG => "dat", // proprietary
+                CompressionFormat.XMA => "dat", // proprietary
+                CompressionFormat.AAC => "aac",
+                CompressionFormat.GCADPCM => "wav", // nintendo adpcm
+                CompressionFormat.ATRAC9 => "dat", // proprietary
+                _ => ""
+            };
         }
     }
 }
