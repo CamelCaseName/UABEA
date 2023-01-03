@@ -62,6 +62,7 @@
         <PackageReference Include="Avalonia.Diagnostics" Version="11.0.0-preview3" />
         <PackageReference Include="Fmod5Sharp" Version="3.0.1" />
         <PackageReference Include="Mono.Cecil" Version="0.11.4" />
+        <PackageReference Include="NLayer" Version="1.14.0" />
     </ItemGroup>
 
     <Target Name="PostBuild" AfterTargets="PostBuildEvent">

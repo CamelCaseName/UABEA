@@ -1,8 +1,6 @@
 ﻿using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 using Avalonia.Controls;
-using MessageBox.Avalonia.Enums;
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;

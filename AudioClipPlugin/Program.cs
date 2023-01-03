@@ -4,10 +4,10 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Fmod5Sharp;
 using Fmod5Sharp.FmodTypes;
-using Microsoft.VisualBasic.FileIO;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.Intrinsics.X86;
 using System.Threading.Tasks;
 using UABEAvalonia;
 using UABEAvalonia.Plugins;
@@ -77,7 +77,7 @@ namespace AudioPlugin
                     name = Extensions.ReplaceInvalidPathChars(name);
 
                     CompressionFormat compressionFormat = (CompressionFormat)baseField["m_CompressionFormat"].AsInt;
-                    string extension = AudioPluginDll.GetExtension(compressionFormat);
+                    string extension = AudioPlugin.GetExtension(compressionFormat);
                     string file = Path.Combine(dir, $"{name}-{Path.GetFileName(cont.FileInstance.path)}-{cont.PathId}.{extension}");
 
                     string ResourceSource = baseField["m_Resource.m_Source"].AsString;
@@ -120,7 +120,7 @@ namespace AudioPlugin
 
             CompressionFormat compressionFormat = (CompressionFormat)baseField["m_CompressionFormat"].AsInt;
 
-            string extension = AudioPluginDll.GetExtension(compressionFormat);
+            string extension = AudioPlugin.GetExtension(compressionFormat);
 
             var sfd = await win.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions()
             {
@@ -294,13 +294,6 @@ namespace AudioPlugin
 
         private async Task<bool> SingleImport(Window win, AssetWorkspace workspace, AssetContainer selection)
         {
-            AssetTypeValueField baseField = workspace.GetBaseField(selection);
-            string name = baseField["m_Name"].AsString;
-            name = Extensions.ReplaceInvalidPathChars(name);
-
-            CompressionFormat compressionFormat = (CompressionFormat)baseField["m_CompressionFormat"].AsInt;
-            string extension = AudioPluginDll.GetExtension(compressionFormat);
-
             var sfd = await win.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions()
             {
                 Title = "Select audio file",
@@ -313,9 +306,90 @@ namespace AudioPlugin
             string file = uri.LocalPath;
             if (file == null || file == string.Empty) return false;
 
+            string extension = Path.GetExtension(file)[1..];// get rid of the dot
+            var compressionFormat = AudioPlugin.CompressionFormatFromExtension(extension);
+
             //todo import file into pcm bytes, then load into assetbundle and adjust offsets for it and all following files
 
-            return true;
+            switch (compressionFormat)
+            {
+                case CompressionFormat.PCM: //wav
+                    return true;
+                case CompressionFormat.Vorbis: //ogg
+                    return true;
+                case CompressionFormat.MP3: //mp3
+                    PatchMp3(win, workspace, selection, file);
+                    return true;
+                case CompressionFormat.AAC: //aac
+                    return true;
+                default:
+                    await MessageBoxUtil.ShowDialog(win, "Error", "File extension unkown, aborting");
+                    return false;
+            }
+        }
+
+        private void PatchMp3(Window win, AssetWorkspace workspace, AssetContainer selection, string filePath)
+        {
+            var Mp3File = new NLayer.MpegFile(filePath);
+            byte[] pcm = new byte[Mp3File.Length]; //4 due to 4 bytes in a float
+            long samplesRead = Mp3File.ReadSamples(pcm, 0, pcm.Length);
+            if (samplesRead <= 0) return;
+
+            AssetTypeValueField baseField = workspace.GetBaseField(selection);
+            AssetTypeValueField m_Resource = baseField["m_Resource"];
+
+            baseField["m_Channels"].AsInt = Mp3File.Channels;
+            baseField["m_Frequency"].AsInt = Mp3File.SampleRate;
+            baseField["m_BitsPerSample"].AsInt = sizeof(float) * 8;
+            baseField["m_Length"].AsFloat = (float)(Mp3File.Duration.TotalMilliseconds / 1000);
+            baseField["m_CompressionFormat"].AsInt = (int)CompressionFormat.MP3;
+
+            string searchPath = m_Resource["m_Source"].AsString;
+            if (searchPath.StartsWith("archive:/"))
+                searchPath = searchPath[9..];
+            searchPath = Path.GetFileName(searchPath);
+
+            AssetBundleFile bundle = selection.FileInstance.parentBundle.file;
+            AssetBundleDirectoryInfo[] dirInf = bundle.BlockAndDirInfo.DirectoryInfos;
+
+            int moveValue = 0, offset;
+            MemoryStream output = new MemoryStream();
+            var writer = new AssetsFileWriter(output);
+            bundle.Unpack(writer);
+            writer.Position = 0;
+
+            for (int i = 0; i < dirInf.Length; i++)
+            {
+                AssetBundleDirectoryInfo info = dirInf[i];
+                if (info.Name == searchPath)
+                {
+                    offset = (int)(info.Offset + m_Resource["m_Offset"].AsInt);
+                    moveValue = pcm.Length - m_Resource["m_Size"].AsInt;
+
+                    if (moveValue > 0)
+                    {
+                        int oldStartOfLater = offset + m_Resource["m_Size"].AsInt;
+                        int newStartOfLater = offset + pcm.Length;
+                        int bufferSize = (int)(writer.BaseStream.Length - oldStartOfLater);
+
+                        byte[] buffer = new byte[bufferSize];
+                        writer.Position = oldStartOfLater;
+                        writer.BaseStream.Read(buffer, 0, bufferSize);
+                        writer.Position = newStartOfLater;
+                        writer.Write(buffer, 0, bufferSize);
+                    }
+                    //write after we moved the following stuff out the way
+                    m_Resource["m_Size"].AsInt = pcm.Length;
+
+                    writer.Position = offset;
+                    writer.Write(pcm, 0, pcm.Length);
+                }
+                else if (moveValue > 0)
+                    info.Offset += moveValue;
+            }
+
+            var replacer = new AssetsReplacerFromMemory(0, selection.PathId, selection.ClassId, selection.MonoId, output.ToArray());
+            workspace.AddReplacer(selection.FileInstance, replacer, output);
         }
     }
 
@@ -364,7 +438,7 @@ namespace AudioPlugin
         }
     }
 
-    public class AudioPluginDll : UABEAPlugin
+    public class AudioPlugin : UABEAPlugin
     {
         public PluginInfo Init()
         {
@@ -381,6 +455,7 @@ namespace AudioPlugin
             };
             return info;
         }
+
         public static string GetExtension(CompressionFormat format)
         {
             return format switch
@@ -396,6 +471,18 @@ namespace AudioPlugin
                 CompressionFormat.GCADPCM => "wav", // nintendo adpcm
                 CompressionFormat.ATRAC9 => "dat", // proprietary
                 _ => ""
+            };
+        }
+
+        public static CompressionFormat CompressionFormatFromExtension(string extension)
+        {
+            return extension switch
+            {
+                "wav" => CompressionFormat.PCM,
+                "ogg" => CompressionFormat.Vorbis,
+                "mp3" => CompressionFormat.MP3,
+                "aac" => CompressionFormat.AAC,
+                _ => CompressionFormat.PCM
             };
         }
     }
